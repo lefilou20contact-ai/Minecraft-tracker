@@ -5,6 +5,9 @@ const app = express();
 
 app.use(express.json());
 
+// =========================================================================
+// CONFIGURATION SUPABASE
+// =========================================================================
 const SUPABASE_URL = 'https://frhhtqjgkuhukzxswpro.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_IVsd8-qvgOydr8TTxO5oCQ_ml_3iUhq';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -170,7 +173,9 @@ app.get('/', (req, res) => {
                 font-weight: bold;
             }
             .no-cape { color: var(--text-muted); font-size: 14px; font-style: italic; }
-            .history-box { grid-column: span 2; }
+            
+            /* Nouveaux styles pour la liste d'historique */
+            .full-width-box { grid-column: span 2; }
             .history-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -199,6 +204,38 @@ app.get('/', (req, res) => {
                 color: var(--text-muted);
             }
             .history-date { font-size: 12px; color: var(--text-muted); }
+
+            .session-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 14px 20px;
+                background: rgba(255, 255, 255, 0.01);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                margin-bottom: 10px;
+                font-size: 14px;
+            }
+            .session-item:hover {
+                border-color: rgba(163, 230, 53, 0.3);
+                background: rgba(163, 230, 53, 0.005);
+            }
+            .session-left { display: flex; align-items: center; gap: 16px; }
+            .session-icon { color: var(--accent); font-size: 16px; width: 20px; text-align: center; }
+            .session-ip { font-weight: 600; color: #fff; }
+            .session-version {
+                font-size: 11px;
+                background: rgba(255, 255, 255, 0.06);
+                color: var(--text-muted);
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-family: monospace;
+            }
+            .session-right { text-align: right; }
+            .session-time { font-weight: bold; color: var(--accent); }
+            .session-date { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+            .no-sessions { color: var(--text-muted); font-style: italic; text-align: center; padding: 20px 0; }
+
             .error-msg {
                 color: #f87171;
                 background: rgba(248,113,113,0.08);
@@ -256,8 +293,13 @@ app.get('/', (req, res) => {
                 <div id="cape-wrapper" class="cape-container"></div>
             </div>
 
-            <div class="panel history-box">
-                <div class="panel-title"><i class="fa-solid fa-clock-rotate-left"></i> Aperçus du Skin</div>
+            <div class="panel full-width-box">
+                <div class="panel-title"><i class="fa-solid fa-clock-rotate-left"></i> Historique des sessions</div>
+                <div id="sessions-wrapper"></div>
+            </div>
+
+            <div class="panel full-width-box">
+                <div class="panel-title"><i class="fa-solid fa-images"></i> Aperçus du Skin</div>
                 <div class="history-grid" id="history-wrapper"></div>
             </div>
         </div>
@@ -296,6 +338,33 @@ app.get('/', (req, res) => {
                         ? '<div class="cape-item"><i class="fa-solid fa-gavel"></i> Cape Officielle Mojang</div>'
                         : '<span class="no-cape">Aucune cape détectée sur ce compte.</span>';
 
+                    // Injection Dynamique de l'historique des sessions
+                    const sessionsWrapper = document.getElementById('sessions-wrapper');
+                    sessionsWrapper.innerHTML = '';
+                    
+                    if (data.history && data.history.length > 0) {
+                        data.history.forEach(session => {
+                            const item = document.createElement('div');
+                            item.className = 'session-item';
+                            item.innerHTML = \`
+                                <div class="session-left">
+                                    <div class="session-icon"><i class="fa-solid \${session.server_ip.includes('Solo') ? 'fa-house' : 'fa-server'}"}></i></div>
+                                    <div>
+                                        <span class="session-ip">\${session.server_ip}</span>
+                                        <span class="session-version">\${session.game_version}</span>
+                                    </div>
+                                </div>
+                                <div class="session-right">
+                                    <div class="session-time">+\${session.play_time} min</div>
+                                    <div class="session-date">\${session.played_at}</div>
+                                </div>
+                            \`;
+                            sessionsWrapper.appendChild(item);
+                        });
+                    } else {
+                        sessionsWrapper.innerHTML = '<div class="no-sessions">Aucun historique de session disponible pour ce joueur.</div>';
+                    }
+
                     const historyWrapper = document.getElementById('history-wrapper');
                     historyWrapper.innerHTML = '';
                     [{ label: "Actuel", date: "Aujourd'hui" }, { label: "#2", date: "Janv. 2026" }, { label: "#1", date: "Création" }].forEach(skin => {
@@ -322,7 +391,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// API - Récupération du profil joueur
+// API - Récupération du profil joueur + historique
 app.get('/api/player/:pseudo', async (req, res) => {
     try {
         const name = req.params.pseudo;
@@ -350,34 +419,102 @@ app.get('/api/player/:pseudo', async (req, res) => {
             }
         }
 
-        const localData = database[uuid] || {
+        // 1. Charger les données du joueur globales depuis Supabase
+        const { data: playerStats } = await supabase
+            .from('tracker_stats')
+            .select('*')
+            .eq('uuid', uuid)
+            .single();
+
+        // 2. Charger les 8 dernières sessions enregistrées pour l'historique
+        const { data: historyData } = await supabase
+            .from('server_history')
+            .select('*')
+            .eq('uuid', uuid)
+            .order('id', { ascending: false })
+            .limit(8);
+
+        const localData = playerStats || {
             totalTime: 0,
             lastServer: "Inconnu (Mod non connecté)",
             lastLogin: "Aucune session reçue"
         };
 
-        res.json({ pseudo: exactPseudo, uuid, skinUrl, capeUrl, stats: localData });
+        res.json({ 
+            pseudo: exactPseudo, 
+            uuid, 
+            skinUrl, 
+            capeUrl, 
+            stats: localData, 
+            history: historyData || [] 
+        });
 
     } catch (error) {
         console.error("Erreur API Mojang:", error.message);
-        res.status(500).json({ error: "Erreur lors de la récupération du profil Mojang." });
+        res.status(500).json({ error: "Erreur lors de la récupération du profil." });
     }
 });
 
-// API - Réception des données du mod JAR
-app.post('/api/update-stats', (req, res) => {
-    const { uuid, serverIp, playTimeDelta } = req.body;
+// API - Réception des données du mod JAR + Insertion Historique
+app.post('/api/update-stats', async (req, res) => {
+    // Le mod mis à jour enverra également le champ gameVersion
+    const { uuid, serverIp, playTimeDelta, gameVersion } = req.body;
     if (!uuid) return res.status(400).json({ error: "UUID manquant" });
 
-    if (!database[uuid]) {
-        database[uuid] = { totalTime: 0, lastServer: "", lastLogin: "" };
-    }
-    database[uuid].totalTime += Number(playTimeDelta) || 0;
-    database[uuid].lastServer = serverIp || "Inconnu";
-    database[uuid].lastLogin = new Date().toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const formattedDate = new Date().toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const addedTime = Number(playTimeDelta) || 0;
+    const currentVersion = gameVersion || "1.20.4"; // Valeur par défaut si non spécifié
+    const currentServer = serverIp || "Inconnu";
 
-    console.log(`[Tracker] Sync reçue — UUID: ${uuid} | Serveur: ${serverIp} | +${playTimeDelta} min | Total: ${database[uuid].totalTime} min`);
-    res.status(200).json({ status: "synced", totalTime: database[uuid].totalTime });
+    try {
+        // 1. Sauvegarde dans la table globale des statistiques
+        const { data: existingPlayer } = await supabase
+            .from('tracker_stats')
+            .select('*')
+            .eq('uuid', uuid)
+            .single();
+
+        let currentTotalTime = addedTime;
+
+        if (existingPlayer) {
+            currentTotalTime = existingPlayer.totalTime + addedTime;
+            await supabase
+                .from('tracker_stats')
+                .update({
+                    totalTime: currentTotalTime,
+                    lastServer: currentServer,
+                    lastLogin: formattedDate
+                })
+                .eq('uuid', uuid);
+        } else {
+            await supabase
+                .from('tracker_stats')
+                .insert([{
+                    uuid: uuid,
+                    totalTime: currentTotalTime,
+                    lastServer: currentServer,
+                    lastLogin: formattedDate
+                }]);
+        }
+
+        // 2. Nouveauté : Insertion de la ligne de session dans la table historique
+        await supabase
+            .from('server_history')
+            .insert([{
+                uuid: uuid,
+                server_ip: currentServer,
+                game_version: currentVersion,
+                play_time: addedTime,
+                played_at: formattedDate
+            }]);
+
+        console.log(`[Supabase System] Sync complète pour ${uuid} (${currentServer} | ${currentVersion} | +${addedTime}min)`);
+        res.status(200).json({ status: "synced", totalTime: currentTotalTime });
+
+    } catch (dbError) {
+        console.error("[Supabase Erreur Ingestion] :", dbError.message);
+        res.status(500).json({ error: "Échec de l'écriture dans l'historique Supabase." });
+    }
 });
 
 const PORT = process.env.PORT || 5000;
