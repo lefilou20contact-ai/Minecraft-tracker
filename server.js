@@ -1,10 +1,13 @@
 const express = require('express');
 const axios = require('axios');
+const { createClient } = require('@supabase/supabase-client');
 const app = express();
 
 app.use(express.json());
 
-let database = {};
+const SUPABASE_URL = 'https://frhhtqjgkuhukzxswpro.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_IVsd8-qvgOydr8TTxO5oCQ_ml_3iUhq';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 app.get('/', (req, res) => {
     res.send(`
